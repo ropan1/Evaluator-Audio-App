@@ -1,5 +1,4 @@
-import 'dart:io';
-import 'package:file_picker/file_picker.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'score_viewer.dart';
 
@@ -36,30 +35,25 @@ class _ScoreSelectionPageState extends State<ScoreSelectionPage> {
         _isLoading = true;
       });
 
-      FilePickerResult? result = await FilePicker.pickFiles(
-        type: FileType.any, // Restricting by extension might not be supported on all platforms reliably
-      );
+      final XFile? file = await openFile();
 
-      if (result != null && result.files.single.path != null) {
-        final file = File(result.files.single.path!);
+      if (file != null) {
         final content = await file.readAsString();
-        
+
         if (mounted) {
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (context) => InteractiveScoreViewer(
-                meiContent: content,
-              ),
+              builder: (context) => InteractiveScoreViewer(meiContent: content),
             ),
           );
         }
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading file: \$e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error loading file: \$e')));
       }
     } finally {
       if (mounted) {
@@ -116,13 +110,13 @@ class _ScoreSelectionPageState extends State<ScoreSelectionPage> {
             const SizedBox(height: 16),
             ElevatedButton.icon(
               onPressed: _isLoading ? null : _pickAndLoadScore,
-              icon: _isLoading 
-                ? const SizedBox(
-                    width: 24, 
-                    height: 24, 
-                    child: CircularProgressIndicator(strokeWidth: 2)
-                  )
-                : const Icon(Icons.upload_file),
+              icon: _isLoading
+                  ? const SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.upload_file),
               label: const Text('Upload Custom Score'),
               style: ElevatedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(
