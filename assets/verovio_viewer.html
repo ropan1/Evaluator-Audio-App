@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="verovio-toolkit.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #ffffff;
+        }
+
+        #verovio-container {
+            width: 100vw;
+            height: 100vh;
+            overflow: auto;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #verovio-container>svg {
+            display: block;
+            margin: 0 auto;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="verovio-container"></div>
+    <script>
+        let vrvToolkit;
+        let notes = [];
+        let currentIndex = -1;
+        let currentStaffN = null;
+        let currentLayerN = null;
+        let attrCache = {};
+
+        function getCachedAttr(id) {
+            if (!attrCache[id]) {
+                attrCache[id] = vrvToolkit.getElementAttr(id) || {};
+            }
+            return attrCache[id];
+        }
+
+        function getNotePart(noteId) {
+            let staffN = null;
+            let layerN = null;
+            const noteElement = document.getElementById(noteId);
+            if (noteElement) {
+                const staffEl = noteElement.closest('.staff');
+                if (staffEl) {
+                    staffN = getCachedAttr(staffEl.id).n;
+                }
+                const layerEl = noteElement.closest('.layer');
+                if (layerEl) {
+                    layerN = getCachedAttr(layerEl.id).n;
+                }
+            }
+            return { staffN, layerN };
+        }
+
+        function initVerovio() {
+            if (vrvToolkit) return;
+            try {
+                vrvToolkit = new verovio.toolkit();
+
+                // Add click listener to the container to handle note selection
+                document.getElementById("verovio-container").addEventListener("click", (event) => {
+                    // Find the closest parent with the 'note' class
+                    const noteElement = event.target.closest('.note');
+                    if (noteElement) {
+                        selectNote(noteElement.id);
+                    }
+                });
+
+                if (window.VerovioChannel) {
+                    window.VerovioChannel.postMessage("READY");
+                }
+            } catch (e) {
+                console.warn("Verovio not fully loaded yet, waiting...");
+            }
+        }
+
+        // Verovio might have already initialized if we're using wasm2js
+        if (verovio.module.calledRun) {
+            initVerovio();
+        } else {
+            verovio.module.onRuntimeInitialized = initVerovio;
+
+            // Fallback in case onRuntimeInitialized was already fired or swallowed
+            let checkInterval = setInterval(() => {
+                if (verovio.module.calledRun) {
+                    clearInterval(checkInterval);
+                    initVerovio();
+                }
+            }, 50);
+        }
+
+        // Function exposed for Dart to call
+        function renderMusic(data) {
+            if (!vrvToolkit) return;
+            try {
+                // Calculate appropriate page width based on the container's physical width
+                const container = document.getElementById("verovio-container");
+                const availableWidth = container.clientWidth - 40; // 40px for the 20px padding on each side
+                const scale = 45; // slightly larger scale for mobile readability
+                const pageWidth = availableWidth * (100 / scale);
+
+                // Tell Verovio to wrap the music to the screen's width and create one continuous vertical page
+                vrvToolkit.setOptions({
+                    pageWidth: Math.max(pageWidth, 100),
+                    pageHeight: 60000, // Very large height to fit everything on page 1
+                    scale: scale,
+                    adjustPageHeight: true,
+                    breaks: 'auto', // Ignore encoded line breaks and reflow dynamically
+                    header: 'auto',
+                    footer: 'auto'
+                });
+
+                vrvToolkit.loadData(data);
+                let svg = vrvToolkit.renderToSVG(1, {});
+                document.getElementById("verovio-container").innerHTML = svg;
+
+                // Collect all note IDs in order from the rendered SVG
+                const noteElements = document.querySelectorAll('.note');
+                notes = Array.from(noteElements).map(el => el.id);
+                currentIndex = -1;
+                currentStaffN = null;
+                currentLayerN = null;
+                attrCache = {};
+            } catch (e) {
+                if (window.VerovioChannel) {
+                    window.VerovioChannel.postMessage("ERROR: " + e.message);
+                }
+            }
+        }
+
+        function selectNote(id) {
+            // Remove previous background rect if it exists
+            const existingBg = document.getElementById('highlight-rect');
+            if (existingBg) existingBg.remove();
+
+            const noteElement = document.getElementById(id);
+            if (noteElement) {
+                currentIndex = notes.indexOf(id);
+
+                const part = getNotePart(id);
+                currentStaffN = part.staffN;
+                currentLayerN = part.layerN;
+
+                try {
+                    // Get the dimensions of the note
+                    const bbox = noteElement.getBBox();
+
+                    // Create a semi-transparent background rectangle
+                    const padX = 120;
+                    const padY = 200;
+                    const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                    bg.setAttribute('id', 'highlight-rect');
+                    bg.setAttribute('x', bbox.x - padX);
+                    bg.setAttribute('y', bbox.y - padY);
+                    bg.setAttribute('width', bbox.width + padX * 2);
+                    bg.setAttribute('height', bbox.height + padY * 2);
+                    bg.setAttribute('fill', 'rgba(144, 238, 144, 0.5)'); // Light green highlight
+                    bg.setAttribute('rx', 100); // Rounded corners
+                    bg.setAttribute('pointer-events', 'none'); // Don't steal click events
+
+                    // Insert the rect right before the note so it renders behind it
+                    noteElement.parentNode.insertBefore(bg, noteElement);
+                } catch (e) {
+                    console.warn("Could not draw highlight background", e);
+                }
+
+                // Optional: scroll note into view if it's off-screen
+                noteElement.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+
+                let noteInfo = "Selected Note";
+                try {
+                    const noteAttr = getCachedAttr(id);
+                    let pname = noteAttr.pname ? noteAttr.pname.toUpperCase() : '';
+                    let oct = noteAttr.oct ? noteAttr.oct : '';
+
+                    // Verovio moves accidental attributes into a child <accid> element.
+                    // We must find it and query its attributes to know if the note is sharp/flat.
+                    let accid = '';
+                    const accidElement = noteElement.querySelector('.accid');
+                    if (accidElement && accidElement.id) {
+                        const accidAttr = getCachedAttr(accidElement.id);
+                        accid = accidAttr['accid.ges'] ? accidAttr['accid.ges'] : (accidAttr.accid ? accidAttr.accid : '');
+                    } else {
+                        // Fallback if it somehow stayed on the note element
+                        accid = noteAttr['accid.ges'] ? noteAttr['accid.ges'] : (noteAttr.accid ? noteAttr.accid : '');
+                    }
+                    accid = accid.replace('s', '#').replace('f', 'b').replace('n', '♮');
+
+                    let noteName = pname + accid + oct;
+
+                    const measureElement = noteElement.closest('.measure');
+                    let measureNum = '?';
+                    if (measureElement) {
+                        const measureAttr = getCachedAttr(measureElement.id);
+                        if (measureAttr.n) measureNum = measureAttr.n;
+                    }
+
+                    if (noteName && measureNum !== '?') {
+                        noteInfo = `Measure ${measureNum}, Note ${noteName}`;
+                    } else if (noteName) {
+                        noteInfo = `Note ${noteName}`;
+                    } else if (measureNum !== '?') {
+                        noteInfo = `Measure ${measureNum}`;
+                    }
+                } catch (e) {
+                    console.warn("Could not get note info", e);
+                }
+
+                if (window.VerovioChannel) {
+                    window.VerovioChannel.postMessage("SELECTED:" + noteInfo);
+                }
+            }
+        }
+
+        function nextNote() {
+            if (currentIndex === -1 && notes.length > 0) {
+                selectNote(notes[0]);
+                return;
+            }
+
+            for (let i = currentIndex + 1; i < notes.length; i++) {
+                const part = getNotePart(notes[i]);
+                if (part.staffN === currentStaffN && part.layerN === currentLayerN) {
+                    selectNote(notes[i]);
+                    return;
+                }
+            }
+        }
+
+        function prevNote() {
+            if (currentIndex === -1) return;
+
+            for (let i = currentIndex - 1; i >= 0; i--) {
+                const part = getNotePart(notes[i]);
+                if (part.staffN === currentStaffN && part.layerN === currentLayerN) {
+                    selectNote(notes[i]);
+                    return;
+                }
+            }
+        }
+
+        function markSharp() {
+            if (currentIndex === -1) return;
+            const noteElement = document.getElementById(notes[currentIndex]);
+            if (noteElement) {
+                const notehead = noteElement.querySelector('.notehead');
+                if (notehead) {
+                    // Set styles on the child elements (usually SVG <use>)
+                    const children = notehead.querySelectorAll('*');
+                    for (let i = 0; i < children.length; i++) {
+                        children[i].style.fill = 'goldenrod';
+                        children[i].style.stroke = 'goldenrod';
+                    }
+                }
+            }
+        }
+
+        function markFlat() {
+            if (currentIndex === -1) return;
+            const noteElement = document.getElementById(notes[currentIndex]);
+            if (noteElement) {
+                const notehead = noteElement.querySelector('.notehead');
+                if (notehead) {
+                    // Set styles on the child elements (usually SVG <use>)
+                    const children = notehead.querySelectorAll('*');
+                    for (let i = 0; i < children.length; i++) {
+                        children[i].style.fill = 'dodgerblue';
+                        children[i].style.stroke = 'dodgerblue';
+                    }
+                }
+            }
+        }
+    </script>
+</body>
+
+</html>
