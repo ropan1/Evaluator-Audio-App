@@ -1,4 +1,4 @@
-package com.example.verovio_webview_flutter
+package com.example.evaluator_audio_app
 
 import io.flutter.embedding.android.FlutterActivity
 

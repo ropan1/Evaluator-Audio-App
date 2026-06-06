@@ -1,6 +1,6 @@
 {
-    "name": "verovio_webview_flutter",
-    "short_name": "verovio_webview_flutter",
+    "name": "evaluator_audio_app",
+    "short_name": "evaluator_audio_app",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
