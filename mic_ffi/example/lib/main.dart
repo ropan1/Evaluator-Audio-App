@@ -1,5 +1,6 @@
-import 'package:flutter/material.dart';
 import 'dart:async';
+
+import 'package:flutter/material.dart';
 
 import 'package:mic_ffi/mic_ffi.dart' as mic_ffi;
 
@@ -15,14 +16,41 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
-  late int sumResult;
-  late Future<int> sumAsyncResult;
+  double _amplitude = 0;
+  bool _running = false;
+  Timer? _pollTimer;
+
+  void _start() {
+    final int result = mic_ffi.initMic();
+    if (result != 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to start microphone (code $result)')),
+      );
+      return;
+    }
+    _pollTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+      setState(() => _amplitude = mic_ffi.getAmplitude());
+    });
+    setState(() => _running = true);
+  }
+
+  void _stop() {
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    mic_ffi.stopMic();
+    setState(() {
+      _running = false;
+      _amplitude = 0;
+    });
+  }
 
   @override
-  void initState() {
-    super.initState();
-    sumResult = mic_ffi.sum(1, 2);
-    sumAsyncResult = mic_ffi.sumAsync(3, 4);
+  void dispose() {
+    _pollTimer?.cancel();
+    if (_running) {
+      mic_ffi.stopMic();
+    }
+    super.dispose();
   }
 
   @override
@@ -31,37 +59,28 @@ class _MyAppState extends State<MyApp> {
     const spacerSmall = SizedBox(height: 10);
     return MaterialApp(
       home: Scaffold(
-        appBar: AppBar(title: const Text('Native Packages')),
+        appBar: AppBar(title: const Text('mic_ffi example')),
         body: SingleChildScrollView(
           child: Container(
-            padding: const .all(10),
+            padding: const EdgeInsets.all(10),
             child: Column(
               children: [
                 const Text(
-                  'This calls a native function through FFI that is shipped as source in the package. '
-                  'The native code is built as part of the Flutter Runner build.',
+                  'This captures microphone input through FFI using miniaudio, '
+                  'shipped as source and built as part of the Flutter Runner build.',
                   style: textStyle,
-                  textAlign: .center,
+                  textAlign: TextAlign.center,
                 ),
                 spacerSmall,
                 Text(
-                  'sum(1, 2) = $sumResult',
+                  'amplitude (RMS) = ${_amplitude.toStringAsFixed(4)}',
                   style: textStyle,
-                  textAlign: .center,
+                  textAlign: TextAlign.center,
                 ),
                 spacerSmall,
-                FutureBuilder<int>(
-                  future: sumAsyncResult,
-                  builder: (BuildContext context, AsyncSnapshot<int> value) {
-                    final displayValue = (value.hasData)
-                        ? value.data
-                        : 'loading';
-                    return Text(
-                      'await sumAsync(3, 4) = $displayValue',
-                      style: textStyle,
-                      textAlign: .center,
-                    );
-                  },
+                ElevatedButton(
+                  onPressed: _running ? _stop : _start,
+                  child: Text(_running ? 'Stop' : 'Start'),
                 ),
               ],
             ),

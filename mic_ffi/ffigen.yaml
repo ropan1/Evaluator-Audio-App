@@ -5,6 +5,10 @@ description: |
 
   Regenerate bindings with `dart run ffigen --config ffigen.yaml`.
 output: 'lib/mic_ffi_bindings_generated.dart'
+# The C symbols are snake_case, which trips the non_constant_identifier_names
+# lint. Emit an ignore directive into the generated file instead of renaming.
+preamble: |
+  // ignore_for_file: non_constant_identifier_names
 headers:
   entry-points:
     - 'src/mic_ffi.h'
